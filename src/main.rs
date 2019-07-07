@@ -1,4 +1,3 @@
-/*
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -26,19 +25,6 @@ struct Vel(f32);
 #[derive(Debug, Component)]
 #[storage(VecStorage)]
 struct Pos(f32);
-
-struct SysA;
-
-impl<'a> System<'a> for SysA {
-    type SystemData = (WriteStorage<'a, Pos>, ReadStorage<'a, Vel>);
-
-    fn run(&mut self, (mut pos, vel): Self::SystemData) {
-        for (pos, vel) in (&mut pos, &vel).join() {
-            pos.0 += vel.0;
-            println!("{:?} pos, {:?} vel", pos, vel);
-        }
-    }
-}
 
 mod cp437;
 use cp437::{Coords, Cp437};
@@ -108,22 +94,84 @@ fn randomize_tiles(
     Ok(())
 }
 
+fn draw_tile(
+    canvas: &mut Canvas<Window>,
+    frame_texture: &mut Texture,
+    tiles_texture: &mut Texture,
+    tile: &Tile,
+) -> Result<(), String> {
+    canvas
+        .with_texture_canvas(frame_texture, |texture_canvas| {
+            let coords = Coords::from(tile.code_point);
+            let srcrect = Rect::new(
+                (TILE_SIZE.0 as i32) * coords.row,
+                (TILE_SIZE.1 as i32) * coords.col,
+                TILE_SIZE.0,
+                TILE_SIZE.1,
+            );
+            let dstrect = Rect::new(
+                (tile.row * TILE_SIZE.0) as i32,
+                (tile.col * TILE_SIZE.1) as i32,
+                TILE_SIZE.0,
+                TILE_SIZE.1,
+            );
+            let Color { r, g, b,  .. } = tile.foreground;
+            tiles_texture.set_color_mod(r, g, b);
+            texture_canvas.set_draw_color(tile.background);
+            texture_canvas
+                .fill_rect(Some(dstrect))
+                .expect("failed to draw rect");
+            texture_canvas
+                .copy(&tiles_texture, srcrect, dstrect)
+                .expect("failed to copy tile");
+        })
+      .map_err(|e| e.to_string())?;
+
+    canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+
+    Ok(())
+}
+
+#[derive(Debug, Copy, Clone)]
+enum TileAnimation {
+    Static,
+    Blinking(f32),
+    VerticalWavy,
+    HorizontalWavy,
+}
+
+#[derive(Debug, Copy, Clone)]
 struct Tile {
-    cp: Cp437,
-    fg: Color,
-    bg: Color,
+    row: u32,
+    col: u32,
+    code_point: Cp437,
+    foreground: Color,
+    background: Color,
+    dirty: bool,
+    animation: TileAnimation,
+}
+
+impl Tile {
+    pub fn dirty(&self) -> bool {
+        self.dirty
+    }
 }
 
 impl Default for Tile {
     fn default() -> Self {
         Self {
-            cp: Cp437::QuestionMark,
-            fg: Color::RGBA(255, 0, 0, 255),
-            bg: Color::RGBA(0, 0, 255, 255),
+            row: 0,
+            col: 0,
+            code_point: Cp437::QuestionMark,
+            foreground: Color::RGBA(255, 0, 0, 255),
+            background: Color::RGBA(0, 0, 255, 255),
+            dirty: true,
+            animation: TileAnimation::Static,
         }
     }
 }
 
+#[derive(Debug, Default)]
 struct Console {
     width: u32,
     height: u32,
@@ -131,10 +179,12 @@ struct Console {
 }
 
 impl Console {
-    fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32) -> Self {
         let mut tiles = Vec::new();
-        for _ in 0..(width * height) {
-            tiles.push(Tile::default());
+        for row in 0..width {
+            for col in 0..height {
+                tiles.push(Tile { row, col, ..Default::default() })
+            }
         }
         Self {
             width,
@@ -142,20 +192,87 @@ impl Console {
             tiles,
         }
     }
+/*
+    // TODO: pass by reference?
+    pub fn dirty_tiles(&self) -> impl Iterator<Item = Tile> {
+        self.tiles.into_iter().filter(|t| t.dirty)
+    }
+*/
+    pub fn tiles(&self) -> &Vec<Tile> {
+        &self.tiles
+    }
+
+    pub fn reset_tiles(&mut self) {
+        for t in &mut self.tiles {
+            t.dirty = false;
+        }
+    }
+
+    pub fn tile_mut(&mut self, x: u32, y: u32) -> Option<&mut Tile> {
+        if x > self.width || y > self.height { return None; }
+        let index = self.index(x, y);
+        Some(&mut self.tiles[index])
+    }
+
+    fn index(&self, x: u32, y: u32) -> usize {
+        (x + (y * self.height)) as usize
+    }
+}
+
+use sdl2::render::{TextureCreator, WindowCanvas};
+use sdl2::video::WindowContext;
+use sdl2::{EventPump, Sdl};
+
+/*
+struct Sdl2System<'r> {
+    sdl: Sdl,
+    canvas: WindowCanvas,
+    texture_creator: &'r TextureCreator<WindowContext>,
+    tiles_texture: Texture<'r>,
+    frame_texture: Texture<'r>,
+    event_pump: EventPump,
+    dstrect: Rect,
+}
+
+impl<'a, 'r> System<'a> for Sdl2System<'r> {
+    type SystemData = (Read<'a, Console>,
+                       Entities<'a>,
+                       ReadStorage<'a, Pos>);
+
+    fn run(&mut self, (con, ent, pos): Self::SystemData) {
+        println!("{:?}", *con);
+
+        println!("Listing Entities:");
+        for (ent, pos) in (&ent, &pos).join() {
+            println!("{:?}", ent);
+        }
+    }
+}
+*/
+
+#[derive(Debug, Default)]
+struct State {
+    quit: bool,
+}
+
+#[derive(Debug, Default)]
+struct PressedKeycodes(HashSet<Keycode>);
+
+struct SysA;
+
+impl<'a> System<'a> for SysA {
+    type SystemData = (Read<'a, PressedKeycodes>, Write<'a, State>);
+
+    fn run(&mut self, data: Self::SystemData) {
+        let (keycodes, mut state) = data;
+
+        if keycodes.0.contains(&Keycode::Escape) {
+            state.quit = true;
+        }
+    }
 }
 
 fn main() -> Result<(), String> {
-    let mut world = World::new();
-    let mut dispatcher = DispatcherBuilder::new().with(SysA, "sys_a", &[]).build();
-    dispatcher.setup(&mut world.res);
-    world.create_entity().with(Vel(2.0)).with(Pos(0.0)).build();
-    world.create_entity().with(Vel(4.0)).with(Pos(1.6)).build();
-    world.create_entity().with(Vel(1.5)).with(Pos(5.4)).build();
-    world.create_entity().with(Pos(2.0)).build();
-    dispatcher.dispatch(&mut world.res);
-
-    println!("{:?}", Coords::from(Cp437::from('G')));
-
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
     let _image_context = sdl2::image::init(InitFlag::JPG | InitFlag::PNG)?;
@@ -189,19 +306,38 @@ fn main() -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     let mut event_pump = sdl_context.event_pump()?;
-    let mut dstrect = Rect::new(0, 0, 400, 300);
+    let mut dstrect = Rect::new(0, 0, 0, 0);
     let mut fps = FPSCounter::new();
     let mut dirty_window = false;
 
     canvas.window_mut().show();
     canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-    update_dstrect(&mut dstrect, canvas.window().size());
-    randomize_tiles(&mut canvas, &mut frame_texture, &mut tiles_texture)?;
 
-    'mainloop: loop {
+    let mut world = World::new();
+    world.register::<Vel>();
+    world.register::<Pos>();
+
+    world.insert(Console::new(70, 30));
+    world.insert(State { quit: false });
+    world.insert(PressedKeycodes);
+
+    println!("{:?}", Coords::from(Cp437::from('G')));
+
+    let mut dispatcher = DispatcherBuilder::new().with(SysA, "sys_a", &[]).build();
+
+    dispatcher.setup(&mut world);
+    world.create_entity().with(Vel(2.0)).with(Pos(0.0)).build();
+    world.create_entity().with(Vel(4.0)).with(Pos(1.6)).build();
+    world.create_entity().with(Vel(1.5)).with(Pos(5.4)).build();
+    world.create_entity().with(Pos(2.0)).build();
+    dispatcher.dispatch(&mut world);
+
+    update_dstrect(&mut dstrect, canvas.window().size());
+
+    'main: loop {
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. } => break 'mainloop,
+                Event::Quit { .. } => break 'main,
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::Resized { .. } | WindowEvent::SizeChanged { .. } => {
                         dirty_window = true;
@@ -217,14 +353,19 @@ fn main() -> Result<(), String> {
             .pressed_scancodes()
             .filter_map(Keycode::from_scancode)
             .collect();
+        *world.fetch_mut::<PressedKeycodes>() = PressedKeycodes(keycodes);
 
-        if keycodes.contains(&Keycode::Escape) {
-            break 'mainloop;
-        }
+        // Update user input
+        dispatcher.dispatch(&mut world);
+        world.maintain();
 
-        if keycodes.contains(&Keycode::Space) {
-            randomize_tiles(&mut canvas, &mut frame_texture, &mut tiles_texture)?;
+        let mut console = world.fetch_mut::<Console>();
+        for tile in console.tiles() {
+            if tile.dirty() {
+                draw_tile(&mut canvas, &mut frame_texture, &mut tiles_texture, &tile)?;
+            }
         }
+        console.reset_tiles();
 
         if dirty_window {
             update_dstrect(&mut dstrect, canvas.window().size());
@@ -236,15 +377,11 @@ fn main() -> Result<(), String> {
         canvas.present();
 
         fps.tick();
+
+        if world.fetch::<State>().quit { break 'main; }
     }
 
     canvas.window_mut().hide();
 
     Ok(())
-}
-*/
-
-use specs::prelude::*;
-
-fn main() {
 }
