@@ -10,4 +10,4 @@
 
 Okay, how to structure this thing?
 
-I want to have animations like blinking or wavy glyphs that update every frame without having to wait for user input.
+Input handling needs to occur before the rest of the logic processing. The tricky part is I want animations that update each frame but the rest of the game to be driven purely through input events. e.g. a perhaps a torch is represented as a color-shifting 't'. The 't' should continue shifting colors while waiting for the user to press something.

@@ -115,7 +115,7 @@ fn draw_tile(
                 TILE_SIZE.0,
                 TILE_SIZE.1,
             );
-            let Color { r, g, b,  .. } = tile.foreground;
+            let Color { r, g, b, .. } = tile.foreground;
             tiles_texture.set_color_mod(r, g, b);
             texture_canvas.set_draw_color(tile.background);
             texture_canvas
@@ -125,7 +125,7 @@ fn draw_tile(
                 .copy(&tiles_texture, srcrect, dstrect)
                 .expect("failed to copy tile");
         })
-      .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
 
@@ -133,14 +133,14 @@ fn draw_tile(
 }
 
 #[derive(Debug, Copy, Clone)]
-enum TileAnimation {
-    Static,
-    Blinking(f32),
-    VerticalWavy,
-    HorizontalWavy,
+enum Animation {
+    Blink(f32),
+    VerticalShift,
+    HorizontalShift,
+    ColorShift(f32, Color, Color),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct Tile {
     row: u32,
     col: u32,
@@ -148,7 +148,7 @@ struct Tile {
     foreground: Color,
     background: Color,
     dirty: bool,
-    animation: TileAnimation,
+    animations: Vec<Animation>,
 }
 
 impl Tile {
@@ -166,7 +166,7 @@ impl Default for Tile {
             foreground: Color::RGBA(255, 0, 0, 255),
             background: Color::RGBA(0, 0, 255, 255),
             dirty: true,
-            animation: TileAnimation::Static,
+            animations: vec![],
         }
     }
 }
@@ -181,9 +181,13 @@ struct Console {
 impl Console {
     pub fn new(width: u32, height: u32) -> Self {
         let mut tiles = Vec::new();
-        for row in 0..width {
-            for col in 0..height {
-                tiles.push(Tile { row, col, ..Default::default() })
+        for col in 0..height {
+            for row in 0..width {
+                tiles.push(Tile {
+                    row,
+                    col,
+                    ..Default::default()
+                })
             }
         }
         Self {
@@ -192,14 +196,26 @@ impl Console {
             tiles,
         }
     }
-/*
-    // TODO: pass by reference?
-    pub fn dirty_tiles(&self) -> impl Iterator<Item = Tile> {
-        self.tiles.into_iter().filter(|t| t.dirty)
-    }
-*/
+    /*
+        // TODO: pass by reference?
+        pub fn dirty_tiles(&self) -> impl Iterator<Item = Tile> {
+            self.tiles.into_iter().filter(|t| t.dirty)
+        }
+    */
     pub fn tiles(&self) -> &Vec<Tile> {
         &self.tiles
+    }
+
+    pub fn tiles_mut(&mut self) -> &mut Vec<Tile> {
+        &mut self.tiles
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
     }
 
     pub fn reset_tiles(&mut self) {
@@ -209,13 +225,15 @@ impl Console {
     }
 
     pub fn tile_mut(&mut self, x: u32, y: u32) -> Option<&mut Tile> {
-        if x > self.width || y > self.height { return None; }
+        if x > self.width || y > self.height {
+            return None;
+        }
         let index = self.index(x, y);
         Some(&mut self.tiles[index])
     }
 
     fn index(&self, x: u32, y: u32) -> usize {
-        (x + (y * self.height)) as usize
+        (x + (y * self.width)) as usize
     }
 }
 
@@ -253,6 +271,7 @@ impl<'a, 'r> System<'a> for Sdl2System<'r> {
 #[derive(Debug, Default)]
 struct State {
     quit: bool,
+    randomize: bool,
 }
 
 #[derive(Debug, Default)]
@@ -266,9 +285,8 @@ impl<'a> System<'a> for SysA {
     fn run(&mut self, data: Self::SystemData) {
         let (keycodes, mut state) = data;
 
-        if keycodes.0.contains(&Keycode::Escape) {
-            state.quit = true;
-        }
+        state.quit = keycodes.0.contains(&Keycode::Escape);
+        state.randomize = keycodes.0.contains(&Keycode::Space);
     }
 }
 
@@ -318,7 +336,10 @@ fn main() -> Result<(), String> {
     world.register::<Pos>();
 
     world.insert(Console::new(70, 30));
-    world.insert(State { quit: false });
+    world.insert(State {
+        quit: false,
+        randomize: false,
+    });
     world.insert(PressedKeycodes);
 
     println!("{:?}", Coords::from(Cp437::from('G')));
@@ -359,12 +380,33 @@ fn main() -> Result<(), String> {
         dispatcher.dispatch(&mut world);
         world.maintain();
 
+        let state = world.fetch::<State>();
         let mut console = world.fetch_mut::<Console>();
+
+        if state.randomize {
+            //for tile in console.tiles_mut() {
+                for x in 0..70 { for y in 0..30 {
+                    let tile = console.tile_mut(x, y).ok_or("bad tile coords")?;
+                tile.code_point = Cp437::from(random::<u32>() % (Cp437::Count as u32));
+                tile.foreground =
+                    Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
+                tile.background =
+                    Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
+                tile.dirty = true;
+                }}
+            //}
+        }
+
+        if state.quit {
+            break 'main;
+        }
+
         for tile in console.tiles() {
             if tile.dirty() {
                 draw_tile(&mut canvas, &mut frame_texture, &mut tiles_texture, &tile)?;
             }
         }
+
         console.reset_tiles();
 
         if dirty_window {
@@ -377,8 +419,6 @@ fn main() -> Result<(), String> {
         canvas.present();
 
         fps.tick();
-
-        if world.fetch::<State>().quit { break 'main; }
     }
 
     canvas.window_mut().hide();
