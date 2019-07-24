@@ -1,6 +1,6 @@
-/*
 use std::collections::HashSet;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use rand::prelude::*;
 
@@ -30,7 +30,7 @@ mod cp437;
 use cp437::{Coords, Cp437};
 
 const TILE_SIZE: (u32, u32) = (14, 16);
-const CONSOLE_SIZE: (u32, u32) = (70, 30);
+const CONSOLE_SIZE: (u32, u32) = (140, 60);
 const WINDOW_SIZE: (u32, u32) = (1280, 720);
 
 fn update_dstrect(dstrect: &mut Rect, (w, h): (u32, u32)) {
@@ -334,7 +334,7 @@ fn main() -> Result<(), String> {
     world.register::<Vel>();
     world.register::<Pos>();
 
-    world.insert(Console::new(70, 30));
+    world.insert(Console::new(CONSOLE_SIZE.0, CONSOLE_SIZE.1));
     world.insert(State {
         quit: false,
         randomize: false,
@@ -353,6 +353,8 @@ fn main() -> Result<(), String> {
     dispatcher.dispatch(&mut world);
 
     update_dstrect(&mut dstrect, canvas.window().size());
+
+    let mut last_fps_print = Instant::now();
 
     'main: loop {
         for event in event_pump.poll_iter() {
@@ -382,15 +384,23 @@ fn main() -> Result<(), String> {
         let state = world.fetch::<State>();
         let mut console = world.fetch_mut::<Console>();
 
+        use rayon::prelude::*;
+
         if state.randomize {
-            for tile in console.tiles_mut() {
+            console.tiles_mut().par_iter_mut().for_each(|tile| {
+                if (random::<u32>() % 10) != 0 {
+                    return;
+                }
                 tile.code_point = Cp437::from(random::<u32>() % (Cp437::Count as u32));
-                tile.foreground =
-                    Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
-                tile.background =
-                    Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
+                tile.foreground = Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
+                tile.background = Color::RGBA(
+                    random::<u8>() % 32u8,
+                    random::<u8>() % 32u8,
+                    random::<u8>() % 32u8,
+                    255,
+                );
                 tile.dirty = true;
-            }
+            });
         }
 
         if state.quit {
@@ -414,14 +424,18 @@ fn main() -> Result<(), String> {
         canvas.copy(&frame_texture, None, dstrect)?;
         canvas.present();
 
-        fps.tick();
+        if Instant::now() - last_fps_print > Duration::new(5, 0) {
+            println!("fps: {}", fps.tick());
+            last_fps_print = Instant::now();
+        } else {
+            fps.tick();
+        }
     }
 
     canvas.window_mut().hide();
 
     Ok(())
 }
-*/
 
 /*
 fn main() -> Result<(), String> {
@@ -453,6 +467,7 @@ fn main() -> Result<(), String> {
 }
 */
 
+/*
 #[derive(PartialEq)]
 enum Direction {
     N,
@@ -555,3 +570,4 @@ fn main() -> Result<(), String> {
 
     Ok(())
 }
+*/

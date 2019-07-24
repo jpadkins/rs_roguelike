@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 ron = "0.5"
 rand = "0.6"
+rayon = "1.1"
 serde = "1.0"
 slog = "2.5.0"
 specs = "0.15"
