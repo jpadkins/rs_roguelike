@@ -1,11 +1,11 @@
+/*
 use std::collections::HashSet;
 use std::path::Path;
 
 use rand::prelude::*;
 
 use specs::prelude::*;
-#[macro_use]
-extern crate specs_derive;
+use specs_derive::{Component, ConvertSaveload};
 
 use sdl2::event::{Event, WindowEvent};
 use sdl2::image::{InitFlag, LoadSurface};
@@ -297,7 +297,6 @@ fn main() -> Result<(), String> {
     let window = video_subsystem
         .window("rs_project", WINDOW_SIZE.0, WINDOW_SIZE.1)
         .position_centered()
-        .allow_highdpi()
         .resizable()
         .hidden()
         .build()
@@ -384,17 +383,14 @@ fn main() -> Result<(), String> {
         let mut console = world.fetch_mut::<Console>();
 
         if state.randomize {
-            //for tile in console.tiles_mut() {
-                for x in 0..70 { for y in 0..30 {
-                    let tile = console.tile_mut(x, y).ok_or("bad tile coords")?;
+            for tile in console.tiles_mut() {
                 tile.code_point = Cp437::from(random::<u32>() % (Cp437::Count as u32));
                 tile.foreground =
                     Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
                 tile.background =
                     Color::RGBA(random::<u8>(), random::<u8>(), random::<u8>(), 255);
                 tile.dirty = true;
-                }}
-            //}
+            }
         }
 
         if state.quit {
@@ -422,6 +418,140 @@ fn main() -> Result<(), String> {
     }
 
     canvas.window_mut().hide();
+
+    Ok(())
+}
+*/
+
+/*
+fn main() -> Result<(), String> {
+    use hyphenation::{Language, Load, Standard};
+    use slog::{debug, error, info, o, warn, Drain, Logger};
+    use slog_async::Async;
+    use slog_term::{CompactFormat, TermDecorator};
+    use textwrap::Wrapper;
+
+    let decorator = TermDecorator::new().build();
+    let drain = CompactFormat::new(decorator).build().fuse();
+    let drain = Async::new(drain).build().fuse();
+    let log = Logger::root(drain, o!());
+
+    let hyphenator = Standard::from_embedded(Language::EnglishUS).map_err(|e| e.to_string())?;
+    let wrapper = Wrapper::with_splitter(20, hyphenator);
+
+    debug!(log, "Logging ready!");
+    info!(log, "Logging ready!");
+    warn!(log, "Logging ready!");
+    error!(log, "Logging ready!");
+
+    println!(
+        "{}",
+        wrapper.fill("This is a fairly long line. I wonder how textwrap will handle it?")
+    );
+
+    Ok(())
+}
+*/
+
+#[derive(PartialEq)]
+enum Direction {
+    N,
+    NE,
+    E,
+    SE,
+    S,
+    SW,
+    W,
+    NW,
+}
+
+#[derive(PartialEq)]
+enum Input {
+    Accept,
+    Decline,
+    Exit,
+    Direction(Direction),
+}
+
+trait Scene {
+    fn update(self: Box<Self>, input: Input) -> Box<Scene>;
+}
+
+struct SceneA {
+    switch_input: Input,
+}
+
+impl Scene for SceneA {
+    fn update(self: Box<Self>, input: Input) -> Box<Scene> {
+        if input == self.switch_input {
+            println!("SceneA: Switching to SceneB!");
+            Box::new(SceneB {
+                switch_input: Input::Direction(Direction::N),
+            })
+        } else {
+            self
+        }
+    }
+}
+
+impl Drop for SceneA {
+    fn drop(&mut self) {
+        println!("dropping SceneA!");
+    }
+}
+
+struct SceneB {
+    switch_input: Input,
+}
+
+impl Scene for SceneB {
+    fn update(self: Box<Self>, input: Input) -> Box<Scene> {
+        if input == self.switch_input {
+            println!("SceneB: Switching to SceneA!");
+            Box::new(SceneA {
+                switch_input: Input::Decline,
+            })
+        } else {
+            self
+        }
+    }
+}
+
+impl Drop for SceneB {
+    fn drop(&mut self) {
+        println!("dropping SceneB!");
+    }
+}
+
+fn main() -> Result<(), String> {
+    let mut scene: Box<Scene> = Box::new(SceneA {
+        switch_input: Input::Decline,
+    });
+    use std::io::Read;
+
+    'main: loop {
+        let c: char = std::io::stdin()
+            .bytes()
+            .next()
+            .and_then(|r| r.ok())
+            .map(|b| b as char)
+            .ok_or("IO Err")?;
+
+        match c {
+            '\n' => {}
+            '\u{1b}' => break 'main,
+            'a' => {
+                scene = scene.update(Input::Direction(Direction::N));
+            }
+            'b' => {
+                scene = scene.update(Input::Decline);
+            }
+            'c' => {
+                scene = scene.update(Input::Direction(Direction::S));
+            }
+            c => println!("{:?}", c),
+        }
+    }
 
     Ok(())
 }

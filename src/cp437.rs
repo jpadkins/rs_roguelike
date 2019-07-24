@@ -565,9 +565,10 @@ impl From<char> for Cp437 {
 impl From<u32> for Cp437 {
     fn from(u: u32) -> Self {
         if u >= Cp437::Count as u32 {
-            return Cp437::Null;
+            Cp437::Null
+        } else {
+            unsafe { transmute(u) }
         }
-        unsafe { transmute(u) }
     }
 }
 
